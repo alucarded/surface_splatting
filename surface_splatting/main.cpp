@@ -31,6 +31,13 @@
 #include <array>
 #include <exception>
 
+#include <pcl/io/ply_io.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/surface/gp3.h>
+
 using namespace Eigen;
 
 namespace
@@ -45,11 +52,164 @@ std::vector<Eigen::Vector3f>               m_ref_normals;
 
 std::vector<Eigen::Vector3f>               m_vertices;
 std::vector<std::array<unsigned int, 3> >  m_faces;
+std::vector<pcl::Vertices>  m_faces_pcd;
 std::vector<Eigen::Vector3f>               m_normals;
 
 std::vector<Surfel>  m_surfels;
 
 void load_triangle_mesh(std::string const& filename);
+void load_point_cloud(std::string const& filename);
+void pcl_triangulate(pcl::PointCloud<pcl::PointNormal>::Ptr cloud);
+
+void load_pcd(std::string const& filename, std::vector<Eigen::Vector3f> &vertices,
+		std::vector<std::array<unsigned int, 3> > &faces)
+{
+	std::cout << "Loading PCD file..." << std::endl;
+
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
+	if (pcl::io::loadPCDFile<pcl::PointXYZ>(filename.c_str(), *cloud) == -1) {
+		PCL_ERROR ("Couldn't read file %s \n", filename.c_str());
+	}
+
+	for (size_t i = 0; i < cloud->size(); i++) {
+		Eigen::Vector3f v(cloud->points[i].x,
+				cloud->points[i].y,
+				cloud->points[i].z);
+		vertices.push_back(v);
+	}
+
+	// estimateNormals( ... );
+
+	std::cout << "Loading PCD file finished." << std::endl;
+
+}
+
+void load_ply_with_normals(std::string const& filename, std::vector<Eigen::Vector3f> &vertices,
+		std::vector<std::array<unsigned int, 3> > &faces)
+{
+	std::cout << "Loading PLY file..." << std::endl;
+
+	pcl::PointCloud<pcl::PointNormal>::Ptr cloud(new pcl::PointCloud<pcl::PointNormal>());
+	if (pcl::io::loadPLYFile<pcl::PointNormal>(filename.c_str(), *cloud) == -1) {
+		PCL_ERROR ("Couldn't read file %s \n", filename.c_str());
+	}
+
+	for (size_t i = 0; i < cloud->size(); i++) {
+		Eigen::Vector3f v(cloud->points[i].x,
+				cloud->points[i].y,
+				cloud->points[i].z);
+		vertices.push_back(v);
+	}
+
+	pcl_triangulate(cloud);
+
+	std::cout << "Loading PLY file finished." << std::endl;
+
+}
+
+/*
+void estimateNormals()
+{
+	// Normal estimation*
+	pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> n;
+	pcl::PointCloud<pcl::Normal>::Ptr normals (new pcl::PointCloud<pcl::Normal>);
+	pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
+	tree->setInputCloud (cloud);
+	n.setInputCloud (cloud);
+	n.setSearchMethod (tree);
+	n.setKSearch (20);
+	n.compute (*normals);
+	//* normals should not contain the point normals + surface curvatures
+
+	// set normals
+	for (size_t i = 0; i < normals->size(); i++) {
+		Eigen::Vector3f v(normals->at(i).normal[0], normals->at(i).normal[1], normals->at(i).normal[2]);
+		m_normals.push_back(v);
+	}
+
+	// Concatenate the XYZ and normal fields*
+	pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals (new pcl::PointCloud<pcl::PointNormal>);
+	pcl::concatenateFields (*cloud, *normals, *cloud_with_normals);
+	//* cloud_with_normals = cloud + normals
+
+	// Create search tree*
+	pcl::search::KdTree<pcl::PointNormal>::Ptr tree2 (new pcl::search::KdTree<pcl::PointNormal>);
+	tree2->setInputCloud (cloud_with_normals);
+
+	// Initialize objects
+	pcl::GreedyProjectionTriangulation<pcl::PointNormal> gp3;
+	pcl::PolygonMesh triangles;
+
+	// Set the maximum distance between connected points (maximum edge length)
+	gp3.setSearchRadius (0.025); // 0.025
+
+	// Set typical values for the parameters
+	gp3.setMu (2.5); // 2.5
+	gp3.setMaximumNearestNeighbors (100); // 100
+	gp3.setMaximumSurfaceAngle(M_PI/4); // 45 degrees
+	gp3.setMinimumAngle(M_PI/18); // 10 degrees
+	gp3.setMaximumAngle(2*M_PI/3); // 120 degrees
+	gp3.setNormalConsistency(true);
+
+	// Get result
+	gp3.setInputCloud (cloud_with_normals);
+	gp3.setSearchMethod (tree2);
+	gp3.reconstruct (triangles);
+
+	// Additional vertex information
+	std::vector<int> parts = gp3.getPartIDs();
+	std::vector<int> states = gp3.getPointStates();
+
+	// set faces
+	for (size_t i = 0; i < triangles.polygons.size(); i++) {
+		pcl::Vertices vs = triangles.polygons[i];
+		std::array<unsigned int, 3> elem{vs.vertices[0], vs.vertices[1], vs.vertices[2]};
+		m_faces.push_back(elem);
+	}
+
+	m_faces_pcd = triangles.polygons;
+}
+*/
+
+void pcl_triangulate(pcl::PointCloud<pcl::PointNormal>::Ptr cloud)
+{
+	// Create search tree*
+	pcl::search::KdTree<pcl::PointNormal>::Ptr tree2 (new pcl::search::KdTree<pcl::PointNormal>);
+	tree2->setInputCloud (cloud);
+
+	// Initialize objects
+	pcl::GreedyProjectionTriangulation<pcl::PointNormal> gp3;
+	pcl::PolygonMesh triangles;
+
+	// Set the maximum distance between connected points (maximum edge length)
+	gp3.setSearchRadius (0.025); // 0.025
+
+	// Set typical values for the parameters
+	gp3.setMu (2.5); // 2.5
+	gp3.setMaximumNearestNeighbors (100); // 100
+	gp3.setMaximumSurfaceAngle(M_PI/4); // 45 degrees
+	gp3.setMinimumAngle(M_PI/18); // 10 degrees
+	gp3.setMaximumAngle(2*M_PI/3); // 120 degrees
+	gp3.setNormalConsistency(true);
+
+	// Get result
+	gp3.setInputCloud (cloud);
+	gp3.setSearchMethod (tree2);
+	gp3.reconstruct (triangles);
+
+	// Additional vertex information
+	std::vector<int> parts = gp3.getPartIDs();
+	std::vector<int> states = gp3.getPointStates();
+
+	// set faces
+	for (size_t i = 0; i < triangles.polygons.size(); i++) {
+		pcl::Vertices vs = triangles.polygons[i];
+		std::array<unsigned int, 3> elem{vs.vertices[0], vs.vertices[1], vs.vertices[2]};
+		m_faces.push_back(elem);
+	}
+
+	m_faces_pcd = triangles.polygons;
+}
 
 void
 displayFunc()
@@ -101,6 +261,33 @@ load_triangle_mesh(std::string const& filename)
 
     GLviz::set_vertex_normals_from_triangle_mesh(
         m_vertices, m_faces, m_normals);
+
+    m_ref_vertices = m_vertices;
+    m_ref_normals = m_normals;
+}
+
+void load_point_cloud(std::string const& filename)
+{
+    std::cout << "\nRead " << filename << "." << std::endl;
+    std::ifstream input(filename);
+
+    if (input.good())
+    {
+        input.close();
+        load_ply_with_normals(filename, m_vertices, m_faces);
+    }
+    else
+    {
+        input.close();
+
+        std::ostringstream fqfn;
+        fqfn << path_resources;
+        fqfn << filename;
+        load_ply_with_normals(fqfn.str(), m_vertices, m_faces);
+    }
+
+    std::cout << "  #vertices " << m_vertices.size() << std::endl;
+    std::cout << "  #faces    " << m_faces.size() << std::endl;
 
     m_ref_vertices = m_vertices;
     m_ref_normals = m_normals;
@@ -398,7 +585,7 @@ hsv2rgb(float h, float s, float v, float& r, float& g, float& b)
 }
 
 void
-load_dragon()
+preload_cloud()
 {
     m_surfels.resize(m_faces.size());
 
@@ -432,6 +619,7 @@ load_dragon()
         m_surfels[i].p = Vector3f::Zero();
 
         float h = std::min((std::abs(p0.x()) / 0.45f) * 360.0f, 360.0f);
+        // float h = 360.f; // always 360
         float r, g, b;
         hsv2rgb(h, 1.0f, 1.0f, r, g, b);
         m_surfels[i].rgba = static_cast<unsigned int>(r * 255.0f)
@@ -460,7 +648,7 @@ set_model(void const* value, void* data)
             load_cube();
             break;
         default:
-            load_dragon();
+        	preload_cloud();
     }
 }
 
@@ -545,7 +733,8 @@ main(int argc, char* argv[])
 
     try
     {
-        load_triangle_mesh("stanford_dragon_v40k_f80k.raw");
+        //load_triangle_mesh("stanford_dragon_v40k_f80k.raw");
+    	load_point_cloud("Rf3_normals.ply");
     }
     catch(std::runtime_error const& e)
     {
@@ -560,7 +749,7 @@ main(int argc, char* argv[])
         TwBar* bar = GLviz::twbar();
 
         TwType models = TwDefineEnumFromString("models",
-            "Dragon,Plane,Cube");
+            "Cloud,Plane,Cube");
         TwAddVarCB(bar, "Model", models, &set_model,
             &get_model, nullptr, " group=Scene ");
 

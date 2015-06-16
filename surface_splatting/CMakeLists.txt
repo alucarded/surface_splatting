@@ -1,3 +1,8 @@
+# Set Point Cloud Library directory
+set(PCL_DIR /usr/local/share/pcl-1.8)
+
+find_package( PCL 1.8 REQUIRED )
+
 # Use static anttweakbar.
 add_definitions(-DTW_NO_LIB_PRAGMA -DTW_STATIC)
 
@@ -30,6 +35,7 @@ add_executable(surface_splatting
 include_directories(
     ${CMAKE_CURRENT_BINARY_DIR}
     ${glviz_INCLUDE_DIRS}
+    ${PCL_INCLUDE_DIRS}
 )
 
 add_dependencies(surface_splatting
@@ -37,5 +43,5 @@ add_dependencies(surface_splatting
 )
 
 target_link_libraries(surface_splatting
-    ${glviz_LIBRARIES}
+  ${glviz_LIBRARIES} X11 ${PCL_LIBRARIES}
 )
