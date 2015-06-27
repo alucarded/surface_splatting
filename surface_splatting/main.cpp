@@ -37,6 +37,9 @@
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/features/normal_3d.h>
 #include <pcl/surface/gp3.h>
+#include <pcl/ros/conversions.h>
+#include <pcl/PolygonMesh.h>
+#include <pcl/io/vtk_lib_io.h>
 
 using namespace Eigen;
 
@@ -105,6 +108,36 @@ void load_ply_with_normals(std::string const& filename, std::vector<Eigen::Vecto
 
 	std::cout << "Loading PLY file finished." << std::endl;
 
+}
+
+/*
+#include <pcl/io/vtk_io.h>
+#include <pcl/io/vtk_lib_io.h>
+#include <pcl/io/ply.h>
+#include <pcl/io/ply_io.h>
+*/
+
+void load_ply_with_faces(std::string const& filename, std::vector<Eigen::Vector3f> &vertices,
+		std::vector<std::array<unsigned int, 3> > &faces) {
+	pcl::PolygonMesh::Ptr mesh (new pcl::PolygonMesh);
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
+	pcl::io::loadPolygonFile(filename.c_str(), *mesh);
+	pcl::fromPCLPointCloud2(mesh->cloud, *cloud);
+
+	for (size_t i = 0; i < mesh->polygons.size(); i++) {
+		std::array<unsigned int, 3> tr;
+		tr[0] = mesh->polygons[0].vertices[0];
+		tr[1] = mesh->polygons[0].vertices[1];
+		tr[2] = mesh->polygons[0].vertices[2];
+		faces.push_back(tr);
+	}
+
+	for (size_t i = 0; i < cloud->size(); i++) {
+		Eigen::Vector3f pt(cloud->points[i].x,
+		cloud->points[i].y,
+		cloud->points[i].z);
+		vertices.push_back(pt);
+	}
 }
 
 /*
@@ -185,23 +218,26 @@ void pcl_triangulate(pcl::PointCloud<pcl::PointNormal>::Ptr cloud)
 	gp3.setSearchRadius (0.025); // 0.025
 
 	// Set typical values for the parameters
-	gp3.setMu (2.5); // 2.5
-	gp3.setMaximumNearestNeighbors (100); // 100
+	gp3.setMu (1.5); // 2.5
+	gp3.setMaximumNearestNeighbors (5); // 100
 	gp3.setMaximumSurfaceAngle(M_PI/4); // 45 degrees
 	gp3.setMinimumAngle(M_PI/18); // 10 degrees
 	gp3.setMaximumAngle(2*M_PI/3); // 120 degrees
-	gp3.setNormalConsistency(true);
+	gp3.setNormalConsistency(false);
 
 	// Get result
 	gp3.setInputCloud (cloud);
 	gp3.setSearchMethod (tree2);
+	std::cout << "Reconstructing triangle mesh..." << std::endl;
 	gp3.reconstruct (triangles);
+	std::cout << "Finished reconstructing." << std::endl;
 
 	// Additional vertex information
 	std::vector<int> parts = gp3.getPartIDs();
 	std::vector<int> states = gp3.getPointStates();
 
 	// set faces
+	std::cout << "Setting faces..." << std::endl;
 	for (size_t i = 0; i < triangles.polygons.size(); i++) {
 		pcl::Vertices vs = triangles.polygons[i];
 		std::array<unsigned int, 3> elem{vs.vertices[0], vs.vertices[1], vs.vertices[2]};
@@ -209,6 +245,7 @@ void pcl_triangulate(pcl::PointCloud<pcl::PointNormal>::Ptr cloud)
 	}
 
 	m_faces_pcd = triangles.polygons;
+	std::cout << "Finished setting faces." << std::endl;
 }
 
 void
@@ -274,7 +311,7 @@ void load_point_cloud(std::string const& filename)
     if (input.good())
     {
         input.close();
-        load_ply_with_normals(filename, m_vertices, m_faces);
+        load_ply_with_faces(filename, m_vertices, m_faces);
     }
     else
     {
@@ -283,7 +320,7 @@ void load_point_cloud(std::string const& filename)
         std::ostringstream fqfn;
         fqfn << path_resources;
         fqfn << filename;
-        load_ply_with_normals(fqfn.str(), m_vertices, m_faces);
+        load_ply_with_faces(fqfn.str(), m_vertices, m_faces);
     }
 
     std::cout << "  #vertices " << m_vertices.size() << std::endl;
@@ -734,7 +771,7 @@ main(int argc, char* argv[])
     try
     {
         //load_triangle_mesh("stanford_dragon_v40k_f80k.raw");
-    	load_point_cloud("Rf3_normals.ply");
+    	load_point_cloud("object_with_faces.ply");
     }
     catch(std::runtime_error const& e)
     {
